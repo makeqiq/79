@@ -1,0 +1,276 @@
+-- 飞行控制脚本（LocalScript）
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer
+
+-- 等待玩家角色加载
+local function waitForCharacter()
+	while not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") do
+		task.wait()
+	end
+	return player.Character
+end
+
+-- 创建UI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FlightGUI"
+screenGui.ResetOnSpawn = false  -- 重生时不重置
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- 主面板（Frame）
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 200, 0, 120)
+mainFrame.Position = UDim2.new(0, 50, 0, 50)
+mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true   -- 允许拖动面板（可选）
+mainFrame.Parent = screenGui
+
+-- 标题栏（用于放置X和-按钮）
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+-- 关闭按钮（X）
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 30, 1, 0)
+closeBtn.Position = UDim2.new(1, -30, 0, 0)
+closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.new(1, 1, 1)
+closeBtn.TextScaled = true
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = titleBar
+
+-- 缩小按钮（-）
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Size = UDim2.new(0, 30, 1, 0)
+minimizeBtn.Position = UDim2.new(1, -60, 0, 0)
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+minimizeBtn.Text = "-"
+minimizeBtn.TextColor3 = Color3.new(1, 1, 1)
+minimizeBtn.TextScaled = true
+minimizeBtn.BorderSizePixel = 0
+minimizeBtn.Parent = titleBar
+
+-- 功能按钮容器（用于放置飞、+、-、速度显示）
+local buttonContainer = Instance.new("Frame")
+buttonContainer.Size = UDim2.new(1, 0, 1, -30)
+buttonContainer.Position = UDim2.new(0, 0, 0, 30)
+buttonContainer.BackgroundTransparency = 1
+buttonContainer.Parent = mainFrame
+
+-- 使用UI列表自动排列
+local layout = Instance.new("UIListLayout")
+layout.FillDirection = Enum.FillDirection.Horizontal
+layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+layout.VerticalAlignment = Enum.VerticalAlignment.Center
+layout.Padding = UDim.new(0, 5)
+layout.Parent = buttonContainer
+
+-- 飞行开关按钮（飞）
+local flyBtn = Instance.new("TextButton")
+flyBtn.Size = UDim2.new(0, 50, 0, 30)
+flyBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 200)
+flyBtn.Text = "飞"
+flyBtn.TextColor3 = Color3.new(1, 1, 1)
+flyBtn.TextScaled = true
+flyBtn.BorderSizePixel = 0
+flyBtn.Parent = buttonContainer
+
+-- 加速度按钮（+）
+local plusBtn = Instance.new("TextButton")
+plusBtn.Size = UDim2.new(0, 30, 0, 30)
+plusBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
+plusBtn.Text = "+"
+plusBtn.TextColor3 = Color3.new(1, 1, 1)
+plusBtn.TextScaled = true
+plusBtn.BorderSizePixel = 0
+plusBtn.Parent = buttonContainer
+
+-- 减速度按钮（-）
+local minusBtn = Instance.new("TextButton")
+minusBtn.Size = UDim2.new(0, 30, 0, 30)
+minusBtn.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+minusBtn.Text = "-"
+minusBtn.TextColor3 = Color3.new(1, 1, 1)
+minusBtn.TextScaled = true
+minusBtn.BorderSizePixel = 0
+minusBtn.Parent = buttonContainer
+
+-- 速度显示（初始1）
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(0, 40, 0, 30)
+speedLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+speedLabel.Text = "1"
+speedLabel.TextColor3 = Color3.new(1, 1, 1)
+speedLabel.TextScaled = true
+speedLabel.BorderSizePixel = 0
+speedLabel.Parent = buttonContainer
+
+-- 飞行相关变量
+local flying = false
+local flightSpeed = 1
+local bodyVelocity = nil
+local humanoid = nil
+local rootPart = nil
+local camera = workspace.CurrentCamera
+
+-- 更新速度显示
+local function updateSpeedDisplay()
+	speedLabel.Text = tostring(flightSpeed)
+end
+
+-- 获取玩家输入方向（相对于相机）
+local function getInputDirection()
+	local direction = Vector3.new()
+	-- 前后左右
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+		direction = direction + camera.CFrame.LookVector * Vector3.new(1,0,1)
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+		direction = direction - camera.CFrame.LookVector * Vector3.new(1,0,1)
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+		direction = direction - camera.CFrame.RightVector * Vector3.new(1,0,1)
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+		direction = direction + camera.CFrame.RightVector * Vector3.new(1,0,1)
+	end
+	-- 上下（空格 / 左Ctrl）
+	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+		direction = direction + Vector3.new(0, 1, 0)
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+		direction = direction - Vector3.new(0, 1, 0)
+	end
+	-- 归一化
+	if direction.Magnitude > 0 then
+		direction = direction.Unit
+	end
+	return direction
+end
+
+-- 开启/关闭飞行
+local function setFlying(enable)
+	if enable then
+		-- 确保有角色
+		local character = waitForCharacter()
+		humanoid = character:WaitForChild("Humanoid")
+		rootPart = character:WaitForChild("HumanoidRootPart")
+		
+		-- 如果已有BodyVelocity，先移除
+		if bodyVelocity then
+			bodyVelocity:Destroy()
+		end
+		
+		-- 创建BodyVelocity
+		bodyVelocity = Instance.new("BodyVelocity")
+		bodyVelocity.MaxForce = Vector3.new(4000, 4000, 4000)  -- 足够大的力
+		bodyVelocity.Velocity = Vector3.new()
+		bodyVelocity.P = 10000  -- 响应速度
+		bodyVelocity.Parent = rootPart
+		
+		-- 设置角色状态（防止行走动画干扰）
+		humanoid.PlatformStand = true
+		humanoid.AutoRotate = false
+		
+		-- 每帧更新速度向量
+		local heartbeatConn
+		heartbeatConn = RunService.Heartbeat:Connect(function()
+			if not flying or not bodyVelocity or not rootPart or not rootPart.Parent then
+				heartbeatConn:Disconnect()
+				return
+			end
+			local dir = getInputDirection()
+			bodyVelocity.Velocity = dir * flightSpeed
+		end)
+		
+		flying = true
+	else
+		-- 关闭飞行
+		if bodyVelocity then
+			bodyVelocity:Destroy()
+			bodyVelocity = nil
+		end
+		if humanoid then
+			humanoid.PlatformStand = false
+			humanoid.AutoRotate = true
+		end
+		flying = false
+	end
+end
+
+-- 当角色重生时重新初始化
+local function onCharacterAdded(character)
+	-- 如果飞行已开启，需要重新应用
+	if flying then
+		-- 等待部件加载
+		humanoid = character:WaitForChild("Humanoid")
+		rootPart = character:WaitForChild("HumanoidRootPart")
+		setFlying(true)  -- 重新创建BodyVelocity
+	end
+end
+
+player.CharacterAdded:Connect(onCharacterAdded)
+
+-- 处理角色移除（可选）
+local function onCharacterRemoving()
+	if bodyVelocity then
+		bodyVelocity:Destroy()
+		bodyVelocity = nil
+	end
+end
+if player.Character then
+	player.Character.AncestryChanged:Connect(function()
+		if not player.Character then
+			onCharacterRemoving()
+		end
+	end)
+end
+
+-- UI按钮事件
+closeBtn.MouseButton1Click:Connect(function()
+	setFlying(false)          -- 关闭飞行
+	screenGui:Destroy()       -- 销毁整个UI
+end)
+
+minimizeBtn.MouseButton1Click:Connect(function()
+	-- 缩小：隐藏按钮容器
+	buttonContainer.Visible = not buttonContainer.Visible
+	-- 调整主面板大小（可选，使面板高度自适应）
+	if buttonContainer.Visible then
+		mainFrame.Size = UDim2.new(0, 200, 0, 120)
+	else
+		mainFrame.Size = UDim2.new(0, 200, 0, 30)
+	end
+end)
+
+flyBtn.MouseButton1Click:Connect(function()
+	flying = not flying
+	setFlying(flying)
+	-- 按钮颜色反馈（可选）
+	if flying then
+		flyBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)  -- 绿色表示开启
+	else
+		flyBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 200)   -- 蓝色表示关闭
+	end
+end)
+
+plusBtn.MouseButton1Click:Connect(function()
+	flightSpeed = math.min(flightSpeed + 1, 100)  -- 上限100
+	updateSpeedDisplay()
+end)
+
+minusBtn.MouseButton1Click:Connect(function()
+	flightSpeed = math.max(flightSpeed - 1, 1)    -- 下限1
+	updateSpeedDisplay()
+end)
+
+-- 初始化速度显示
+updateSpeedDisplay()
